@@ -126,36 +126,108 @@ workboxSW.strategies.networkFirst({
 
 // Background sync
 
-let syncQueue = new workbox.backgroundSync.QueuePlugin({
+let bgQueue = new workbox.backgroundSync.QueuePlugin({
   callbacks: {
     replayDidSucceed: async(hash, res) => {
-      self.registration.showNotification('slick-shopper', {
-        body: 'feed back send',
-      })
-      console.log('[SW] feed back send')
+      self.registration.showNotification('Slick shopper Background sync.', {
+        body: 'Add to fav product or remove from fav product is done.'
+      });
     },
     replayDidFail: (hash) => {},
     requestWillEnqueue: (reqData) => {
-      console.log('[SW] Request queued', reqData)
+      console.log('[SS-SW] Request queued', reqData)
     },
     requestWillDequeue: (reqData) => {
-      console.log('[SW] Request dequeued', reqData)
+      console.log('[SS-SW] Request dequeued', reqData)
     },
   },
+});
+
+const requestWrapper = new workbox.runtimeCaching.RequestWrapper({
+  plugins: [bgQueue],
+});
+
+const addToFavProduct = new workbox.routing.RegExpRoute({
+  regExp: /https:\/\/slick-shopper-api.azurewebsites.net\/feedback\/favProducts\/add/,
+  handler: new workbox.runtimeCaching.NetworkOnly({requestWrapper}),
+});
+const removeFromFavProduct = new workbox.routing.RegExpRoute({
+  regExp: /https:\/\/slick-shopper-api.azurewebsites.net\/feedback\/favProducts\/add/,
+  handler: new workbox.runtimeCaching.NetworkOnly({requestWrapper}),
+});
+
+const router = new workbox.routing.Router();
+router.registerRoutes({
+  routes: [addToFavProduct, removeFromFavProduct]
+});
+
+router.addFetchListener();
+
+router.setDefaultHandler({
+  handler: ({
+    event
+  }) => {
+    console.log('[SW] Routed through the default handler', event.request);
+    return fetch(event.request);
+  },
+});
+
+// Push
+
+self.addEventListener('push', function (event) {
+  console.log('[SW] Received push event')
+
+  var notificationData = {}
+
+  if (event.data) {
+    notificationData = event.data.json().notification // "notification node is specific for @angular/service-worker
+  } else {
+    notificationData = {
+      title: 'Something Has Happened',
+      message: 'Something you might want to check out',
+      icon: 'assets/icon.png'
+    }
+  }
+
+  self.registration.showNotification(notificationData.title, notificationData)
 })
 
-const postTweetRequestWrapper = new workbox.runtimeCaching.requestWrapper({
-  plugins: [
-    syncQueue
-  ]
+self.addEventListener('notificationclick', function (event) {
+  console.log('[SW] Received notificationclick event')
+
+  event.notification.close()
+
+  if (event.action == 'opentweet') {
+    console.log('[SW] Performing action opentweet')
+
+    event.waitUntil(
+      clients.openWindow(event.notification.data.url).then(function (windowClient) {
+        // do something with the windowClient.
+      })
+    )
+  } else {
+    console.log('[SW] Performing default click action')
+
+    // This looks to see if the current is already open and
+    // focuses if it is
+    event.waitUntil(
+
+      clients.matchAll({
+        includeUncontrolled: true,
+        type: 'window'
+      })
+      .then(function (clientList) {
+        for (var i = 0; i < clientList.length; i++) {
+          var client = clientList[i]
+          if (client.url == '/' && 'focus' in client)
+            return client.focus()
+        }
+        if (clients.openWindow)
+          return clients.openWindow('/')
+      }))
+  }
 })
 
-const postTweetCacheStrategy = new workbox.runtimeCaching.networkOnly({
-  requestWrapper: postTweetRequestWrapper
-})
-
-const postTweetRoute = new workbox.routing.regExpRoute({
-  regExp: /^https:\/\/slick-shopper-api.azurewebsites.net/,
-  handler: postTweetCacheStrategy,
-  method: 'POST'
+self.addEventListener('notificationclose', function (event) {
+  console.log('[SW] Received notificationclose event')
 })
